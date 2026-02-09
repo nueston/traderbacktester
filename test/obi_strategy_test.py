@@ -1,6 +1,5 @@
 import os
 import sys
-import numpy as np
 
 
 # Add the parent directory to path to import our modules (since we're now in test subfolder)
@@ -15,7 +14,7 @@ def test_obi_strategy():
     print("Obi Strategy Backtesting Test")
     print("=" * 50)
     
-    csv_file = "C:\\Users\\fy37bby\\user\\dev\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260123.mbp-10_ONDS.csv"
+    csv_file = "C:\\Users\\Derba\\Documents\\projects\\rsc\\ONDS\\xnas-itch-20260126.mbp-10_ONDS.csv"
     bento_loader = DataBento()
     market_data = bento_loader.load_csv(csv_file)
     market_data = bento_loader.filter_data(market_data, symbol=None, exclude_cancel=False, depth_level=None, exclude_morning_minutes=10, min_size=20)

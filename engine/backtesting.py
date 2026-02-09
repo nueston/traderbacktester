@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 from numpy.random import default_rng
 
-from ._plotting import plot  # noqa: I001
 from ._stats import compute_stats, dummy_stats
 from ._util import (
     SharedMemoryManager, _as_str, _Indicator, _Data, _batch, _indicator_warmup_nbars,
@@ -1749,6 +1748,8 @@ class Backtest:
         If `open_browser` is `True`, the resulting `filename` will be
         opened in the default web browser.
         """
+        from ._plotting import plot
+        
         if results is None:
             if self._results is None:
                 raise RuntimeError('First issue `backtest.run()` to obtain results.')

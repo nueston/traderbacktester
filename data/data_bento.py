@@ -1,22 +1,75 @@
 import pandas as pd
 import os
 
-isLogging = False
+isLogging = True
 
 class DataBento:
     
+    def replace_nan_with_zero(self, df):
+        """
+        Replace all NaN values in DataFrame with 0
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame
+            
+        Returns:
+            pd.DataFrame: DataFrame with NaN values replaced by 0
+        """
+        return df.fillna(0)
+    
+    def build_tick_index_per_second(self, df):
+        """
+        Build an index mapping each second to the first tick's index in that second
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame with ts_event or ts_event_dt column
+            
+        Returns:
+            dict: Dictionary mapping timestamp (floored to second) to first tick index
+        """
+        # Ensure ts_event_dt exists
+        if 'ts_event_dt' not in df.columns:
+            if 'ts_event' in df.columns:
+                df['ts_event_dt'] = pd.to_datetime(df['ts_event'], errors='coerce', utc=True)
+            else:
+                return {}
+        elif not pd.api.types.is_datetime64_any_dtype(df['ts_event_dt']):
+            df['ts_event_dt'] = pd.to_datetime(df['ts_event_dt'], errors='coerce', utc=True)
+        
+        # Floor timestamps to seconds and get first index for each second
+        df_temp = df.copy()
+        df_temp['ts_second'] = df_temp['ts_event_dt'].dt.floor('s')
+        
+        # Group by second and get first index - use dictionary for O(1) lookup
+        tick_index = {}
+        for second, group in df_temp.groupby('ts_second', sort=True):
+            tick_index[second] = group.index[0]
+        
+        return tick_index
+    
     def load_csv(self, csv_path):
         """
-        Load CSV file and return DataFrame
+        Load CSV file and return DataFrame with NaN values replaced by 0
         
         Args:
             csv_path (str): Path to the CSV file
             
         Returns:
-            pandas.DataFrame: Loaded DataFrame
+            pandas.DataFrame: Loaded DataFrame with NaN replaced by 0
         """
         try:
             df = pd.read_csv(csv_path, sep=',')
+            df = self.replace_nan_with_zero(df)
+            
+            # Store DataFrame ID for validation
+            self._loaded_df_id = id(df)
+            
+            # Build tick index per second for faster trailing tick lookups
+            self._tick_index_per_second = self.build_tick_index_per_second(df)
+            
+            if isLogging and self._tick_index_per_second:
+                print(f"Built tick index with {len(self._tick_index_per_second)} seconds for faster lookups")
+            
             return df
         except Exception as e:
             raise ValueError(f"Error loading CSV file {csv_path}: {e}")
@@ -399,16 +452,24 @@ class DataBento:
             # Filter data for this symbol
             symbol_df = df[df['symbol'] == symbol].copy()
             
+            # Create subfolder for this symbol
+            symbol_folder = os.path.join(output_dir, symbol)
+            os.makedirs(symbol_folder, exist_ok=True)
+            
             # Generate output filename
             output_filename = f"{base_name}_{symbol}.csv"
-            output_path = os.path.join(output_dir, output_filename)
+            output_path = os.path.join(symbol_folder, output_filename)
             
-            # Save filtered data
-            symbol_df.to_csv(output_path, sep=',', index=False)
+            # Only create file if it doesn't already exist
+            if not os.path.exists(output_path):
+                symbol_df.to_csv(output_path, sep=',', index=False)
+                if isLogging:
+                    print(f"Created {output_filename} with {len(symbol_df)} records for symbol {symbol}")
+            else:
+                if isLogging:
+                    print(f"Skipped {output_filename} - file already exists")
+            
             output_files[symbol] = output_path
-            
-            if isLogging:
-                print(f"Created {output_filename} with {len(symbol_df)} records for symbol {symbol}")
         
         if isLogging:
             print(f"Split {csv_path} into {len(output_files)} files by symbol")
@@ -500,7 +561,7 @@ class DataBento:
     
     def get_trailing_ticks(self, df, current_index, trailing_duration):
         """
-        Efficiently get trailing tick data using ts_event_dt column with optimized pandas operations
+        Efficiently get trailing tick data using pre-computed tick index per second
         
         Args:
             df (pd.DataFrame): DataFrame containing tick data with ts_event_dt column
@@ -526,70 +587,36 @@ class DataBento:
         
         # Calculate start time for the trailing window
         start_time = current_time - pd.Timedelta(seconds=trailing_duration)
+        start_second = start_time.floor('s')
         
-        # Use efficient pandas indexing with loc to slice only the relevant portion
-        # This leverages pandas' optimized time-based indexing when possible
-        max_lookback = max(0, current_index - int(trailing_duration * 1000))  # Conservative estimate
-        relevant_slice = df.iloc[max_lookback:current_index + 1]
+        # Use pre-computed tick index if available for this DataFrame
+        if (hasattr(self, '_loaded_df_id') and 
+            hasattr(self, '_tick_index_per_second') and 
+            self._loaded_df_id == id(df) and 
+            self._tick_index_per_second):
+            
+            # Find the first index at or before start_second using the pre-computed index
+            start_idx = 0
+            sorted_timestamps = sorted([ts for ts in self._tick_index_per_second.keys() if ts <= current_time])
+            
+            for ts in sorted_timestamps:
+                if ts >= start_second:
+                    start_idx = self._tick_index_per_second[ts]
+                    break
+                # Keep updating start_idx to get the last valid one before start_second
+                start_idx = self._tick_index_per_second[ts]
+        else:
+            # Fallback to conservative estimate if index not available
+            start_idx = max(0, current_index - int(trailing_duration * 1000))
+        
+        # Slice from start_idx to current_index
+        relevant_slice = df.iloc[start_idx:current_index + 1]
         
         # Apply time filter using vectorized operations
         time_mask = relevant_slice['ts_event_dt'] >= start_time
         
         # Return filtered results efficiently
         return relevant_slice[time_mask].copy()
-        
-    def get_trailing_ticks_ultra_fast(self, df, current_index, trailing_duration):
-        """
-        Ultra-fast version that uses row-based lookback instead of timestamp parsing
-        Sacrifices some precision for maximum speed
-        
-        Args:
-            df (pd.DataFrame): DataFrame containing tick data
-            current_index (int): Current index reference point  
-            trailing_duration (float): Duration in seconds to look back
-            
-        Returns:
-            pd.DataFrame: Recent tick data based on estimated row count
-        """
-        if current_index < 0 or current_index >= len(df):
-            return pd.DataFrame()
-        
-        # Simple row-based approach - much faster than timestamp parsing
-        # Conservative estimate: 100-500 ticks per second depending on market activity
-        estimated_ticks_per_sec = 200  # Adjustable based on your data characteristics
-        lookback_rows = min(int(trailing_duration * estimated_ticks_per_sec), current_index + 1)
-        start_idx = max(0, current_index + 1 - lookback_rows)
-        
-        return df.iloc[start_idx:current_index + 1].copy()
-        
-    def get_trailing_ticks_cached(self, df, current_index, trailing_duration):
-        """
-        Cached version for repeated calls with overlapping time windows
-        Stores recent conversions to avoid repeated timestamp parsing
-        """
-        # Simple cache key
-        df_id = id(df)
-        cache_key = (df_id, current_index, trailing_duration)
-        
-        # Simple cache (could be enhanced with LRU cache)
-        if not hasattr(self, '_trailing_cache'):
-            self._trailing_cache = {}
-        
-        if cache_key in self._trailing_cache:
-            return self._trailing_cache[cache_key]
-        
-        # Calculate result
-        result = self.get_trailing_ticks(df, current_index, trailing_duration)
-        
-        # Store in cache (limit cache size)
-        if len(self._trailing_cache) > 100:  # Simple size limit
-            # Clear half the cache
-            keys_to_remove = list(self._trailing_cache.keys())[:50]
-            for key in keys_to_remove:
-                del self._trailing_cache[key]
-        
-        self._trailing_cache[cache_key] = result
-        return result
     
     def get_current_bid_ask(self, data_manager, current_idx=None, iteration=None):
         """Get current best bid and ask prices"""
@@ -625,37 +652,37 @@ class DataBento:
 if __name__ == "__main__":
     # Create DataBento instance
     data_bento = DataBento()
-    csv_folder_path = "C:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260126.mbp-10.csv_"
+    csv_folder_path = "C:\\Users\\Derba\\Documents\\projects\\rsc"
 
-    # Parse over csv_folder_path and check for 5% divergence with symbol ONDS
+    # # Parse over csv_folder_path and check for 5% divergence with symbol ONDS
     import glob
     csv_files = glob.glob(os.path.join(csv_folder_path, "*.csv"))
 
-    print(f"Checking {len(csv_files)} CSV files for ONDS with 5% divergence threshold...")
+    # print(f"Checking {len(csv_files)} CSV files for ONDS with 5% divergence threshold...")
 
     for csv_file in csv_files:
         try:
             # Split CSV by symbol first
-            #split_files = data_bento.split_csv_by_symbol(csv_file)
+            split_files = data_bento.split_csv_by_symbol(csv_file)
             
-            # Get price range for ONDS symbol from the split file if it exists
-            if 'ONDS' in csv_file:
-                onds_file = csv_file
-                result = data_bento.get_price_range(onds_file, symbol='ONDS')
+        #     # Get price range for ONDS symbol from the split file if it exists
+        #     if 'ONDS' in csv_file:
+        #         onds_file = csv_file
+        #         result = data_bento.get_price_range(onds_file, symbol='ONDS')
                 
-                # Check if divergence is >= 5%
-                if result['divergence_percent'] >= 5.0:
-                    filename = os.path.basename(csv_file)
-                    print(f"*** {filename} - Divergence: {result['divergence_percent']:.2f}% (Min: ${result['min_price']:.4f}, Max: ${result['max_price']:.4f})")
-            else:
-                # No ONDS symbol found in this file
-                continue
+        #         # Check if divergence is >= 5%
+        #         if result['divergence_percent'] >= 5.0:
+        #             filename = os.path.basename(csv_file)
+        #             print(f"*** {filename} - Divergence: {result['divergence_percent']:.2f}% (Min: ${result['min_price']:.4f}, Max: ${result['max_price']:.4f})")
+        #     else:
+        #         # No ONDS symbol found in this file
+        #         continue
                 
         except Exception as e:
             # Skip files that have issues
             print(f"Error processing {os.path.basename(csv_file)}: {e}")
             continue
 
-    #csv_path = "C:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260126.mbp-10.csv\\xnas-itch-20260126.mbp-10.csv"
-    # Filter by specific symbol
-    #filtered_file = data_bento.filter_by_symbol(csv_path, 'ONDS')
+    # csv_path = "C:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260126.mbp-10.csv\\xnas-itch-20260126.mbp-10.csv"
+    # # Filter by specific symbol
+    # filtered_file = data_bento.filter_by_symbol(csv_path, 'ONDS')
