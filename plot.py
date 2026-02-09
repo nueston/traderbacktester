@@ -178,7 +178,7 @@ class PlotOhlc:
 # Example usage
 if __name__ == "__main__":
     # Load from CSV using class method
-    csv_path = "C:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260115.mbp-10_ONDS.csv"
+    csv_path = "C:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260120.mbp-10_ONDS.csv"
     
     try:
         plotter_from_csv = PlotOhlc.from_csv(csv_path)

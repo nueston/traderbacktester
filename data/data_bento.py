@@ -537,59 +537,6 @@ class DataBento:
         
         # Return filtered results efficiently
         return relevant_slice[time_mask].copy()
-        
-    def get_trailing_ticks_ultra_fast(self, df, current_index, trailing_duration):
-        """
-        Ultra-fast version that uses row-based lookback instead of timestamp parsing
-        Sacrifices some precision for maximum speed
-        
-        Args:
-            df (pd.DataFrame): DataFrame containing tick data
-            current_index (int): Current index reference point  
-            trailing_duration (float): Duration in seconds to look back
-            
-        Returns:
-            pd.DataFrame: Recent tick data based on estimated row count
-        """
-        if current_index < 0 or current_index >= len(df):
-            return pd.DataFrame()
-        
-        # Simple row-based approach - much faster than timestamp parsing
-        # Conservative estimate: 100-500 ticks per second depending on market activity
-        estimated_ticks_per_sec = 200  # Adjustable based on your data characteristics
-        lookback_rows = min(int(trailing_duration * estimated_ticks_per_sec), current_index + 1)
-        start_idx = max(0, current_index + 1 - lookback_rows)
-        
-        return df.iloc[start_idx:current_index + 1].copy()
-        
-    def get_trailing_ticks_cached(self, df, current_index, trailing_duration):
-        """
-        Cached version for repeated calls with overlapping time windows
-        Stores recent conversions to avoid repeated timestamp parsing
-        """
-        # Simple cache key
-        df_id = id(df)
-        cache_key = (df_id, current_index, trailing_duration)
-        
-        # Simple cache (could be enhanced with LRU cache)
-        if not hasattr(self, '_trailing_cache'):
-            self._trailing_cache = {}
-        
-        if cache_key in self._trailing_cache:
-            return self._trailing_cache[cache_key]
-        
-        # Calculate result
-        result = self.get_trailing_ticks(df, current_index, trailing_duration)
-        
-        # Store in cache (limit cache size)
-        if len(self._trailing_cache) > 100:  # Simple size limit
-            # Clear half the cache
-            keys_to_remove = list(self._trailing_cache.keys())[:50]
-            for key in keys_to_remove:
-                del self._trailing_cache[key]
-        
-        self._trailing_cache[cache_key] = result
-        return result
     
     def get_current_bid_ask(self, data_manager, current_idx=None, iteration=None):
         """Get current best bid and ask prices"""

@@ -1,4 +1,5 @@
 import pandas as pd
+from data.data_bento import DataBento
 
 class BaseIndicator:
     """Base class for all indicators"""
@@ -136,6 +137,35 @@ class SpreadIndicator(BaseIndicator):
             return 0.0
 
 
+class PriceIndicator(BaseIndicator):
+    """Price indicator that calculates average price from trailing data"""
+    
+    def __init__(self, name, price_column='price', **kwargs):
+        super().__init__(name, **kwargs)
+        self.price_column = price_column
+        self.values = []
+    
+    def initialize(self):
+        self.values = []
+    
+    def process_row(self, row, trailing_df):
+        # Try different possible price columns
+        price_columns = [self.price_column, 'price']
+        
+        for col in price_columns:
+            if col in trailing_df.columns and not pd.isna(row[col]):
+                price_value = row[col]
+                if price_value > 0:
+                    self.values.append(price_value)
+                break
+    
+    def finalize(self):
+        if len(self.values) > 0:
+            return sum(self.values) / len(self.values)
+        else:
+            return 0.0
+
+
 class IndicatorFactory:
     """Factory class to create indicators from rules"""
     
@@ -155,6 +185,8 @@ class IndicatorFactory:
             return VolumeIndicator(name, **kwargs)
         elif indicator_type == 'spread':
             return SpreadIndicator(name, **kwargs)
+        elif indicator_type == 'price':
+            return PriceIndicator(name, **kwargs)
         else:
             raise ValueError(f"Unknown indicator type: {indicator_type}")
 
@@ -210,3 +242,109 @@ def run_trailing_indicators(trailing_df, indicator_rules):
         results[indicator.name] = indicator.finalize()
     
     return results
+
+
+def get_default_indicator_rules():
+    """Get default indicator rules configuration
+    
+    Returns:
+        list: Default indicator rules configuration
+    """
+    return [
+        {
+            'name': 'obi',
+            'type': 'obi',
+            'depth': 10
+        },
+        {
+            'name': 'volume',
+            'type': 'volume',
+        },
+        {
+            'name': 'cancelations',
+            'type': 'cancelations',
+            'action_column': 'action',
+            'cancel_value': 'C'
+        },
+        {
+            'name': 'spread',
+            'type': 'spread',
+            'bid_column': 'bid_px_00',
+            'ask_column': 'ask_px_00'
+        },
+        {
+            'name': 'price',
+            'type': 'price'
+        }
+    ]
+
+
+def update_indicators_history(indicators_history, current_indicators, max_history_length=10):
+    """Update indicators history with current values
+    
+    Args:
+        indicators_history (dict): Dictionary containing history lists for each indicator
+        current_indicators (dict): Dictionary with current indicator values
+        max_history_length (int): Maximum length for each history list
+        
+    Returns:
+        dict: Updated indicators_history
+    """
+    for indicator_name, value in current_indicators.items():
+        if indicator_name not in indicators_history:
+            indicators_history[indicator_name] = []
+        
+        indicators_history[indicator_name].append(value)
+        if len(indicators_history[indicator_name]) > max_history_length:
+            indicators_history[indicator_name].pop(0)
+    
+    return indicators_history
+
+
+def monitor_indicators(data_df, current_index, current_time, last_monitor_time, 
+                      indicator_rules=None, monitor_frequency=30.0, trailing_duration=30.0,
+                      fallback_close_price=None):
+    """Monitor and calculate indicators
+    
+    Args:
+        data_df (pd.DataFrame): DataFrame containing market data
+        current_index (int): Current iteration index
+        current_time (datetime): Current timestamp
+        last_monitor_time (datetime): Last time monitoring was performed
+        indicator_rules (list, optional): List of indicator rules. Uses default if None.
+        monitor_frequency (float): How often to calculate indicators (in seconds)
+        trailing_duration (float): Duration in seconds for trailing calculations
+        fallback_close_price (float, optional): Fallback price if price indicator fails
+        
+    Returns:
+        tuple: (current_indicators, new_last_monitor_time) or (None, last_monitor_time)
+    """
+    # Check if it's time to monitor (based on time frequency)
+    if last_monitor_time is not None:
+        time_diff = (current_time - last_monitor_time).total_seconds()
+        if time_diff < monitor_frequency:
+            return None, last_monitor_time
+    
+    print(current_time)
+    
+    new_last_monitor_time = current_time
+    current_indicators = {}
+    
+    # Use default indicator rules if none provided
+    if indicator_rules is None:
+        indicator_rules = get_default_indicator_rules()
+    
+    # Calculate indicators using trailing data
+    if data_df is not None:
+        data_bento = DataBento()
+        trailing_df = data_bento.get_trailing_ticks(df=data_df, current_index=current_index-1, trailing_duration=trailing_duration)
+        
+        results = run_trailing_indicators(trailing_df, indicator_rules)
+
+        current_indicators['obi'] = results['obi']
+        current_indicators['volume'] = results['volume']
+        current_indicators['cancelations'] = results['cancelations']
+        current_indicators['spread'] = results['spread']
+        current_indicators['price'] = results.get('price', fallback_close_price)
+    
+    return current_indicators, new_last_monitor_time

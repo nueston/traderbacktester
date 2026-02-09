@@ -1,5 +1,5 @@
 from engine.backtesting import Strategy
-from strategy.lib.indicators import run_trailing_indicators
+from strategy.lib.indicators import run_trailing_indicators, monitor_indicators, update_indicators_history, get_default_indicator_rules
 from strategy.lib.effective_price import calculate_effective_price
 from strategy.lib.math import linear_regression
 from data.lib.plot import plot_timeseries
@@ -9,6 +9,9 @@ import numpy as np
 from data.data_bento import DataBento
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+# Import analysis function
+from strategy.lib.analysis import print_indicators_history
 class ObiStrategy(Strategy):
     """
     Strategy that utilizes Bento MBP-10 market data
@@ -24,6 +27,7 @@ class ObiStrategy(Strategy):
             'spread': [],
             'volume': [],
             'cancelations': [],
+            'price': [],
         }
         self.max_history_length = 10
         self.last_monitor_time = None
@@ -56,9 +60,8 @@ class ObiStrategy(Strategy):
         print(f"Position: {self.position.size} | Cash: ${self._broker._cash:.2f}")
         print("-" * 50)
     
-    def monitor_indicators(self, monitor_frequency=30.0, trailing_duration=30.0):
-        """
-        Monitor and update indicators history
+    def monitor_indicators_wrapper(self, monitor_frequency=30.0, trailing_duration=30.0):
+        """Wrapper method for the standalone monitor_indicators function
         
         Args:
             monitor_frequency (float): How often to calculate indicators (in seconds)
@@ -67,69 +70,27 @@ class ObiStrategy(Strategy):
         Returns:
             dict: Current indicator values
         """
-        # Get current timestamp
         current_time = self.data.index[-1]
+        fallback_close_price = self.data.Close[-1] if hasattr(self.data, 'Close') and len(self.data.Close) > 0 else None
         
-        # Check if it's time to monitor (based on time frequency)
-        if self.last_monitor_time is not None:
-            time_diff = (current_time - self.last_monitor_time).total_seconds()
-            if time_diff < monitor_frequency:
-                return None
+        current_indicators, self.last_monitor_time = monitor_indicators(
+            data_df=self.data.df if hasattr(self.data, 'df') else None,
+            current_index=self.iteration,
+            current_time=current_time,
+            last_monitor_time=self.last_monitor_time,
+            indicator_rules=get_default_indicator_rules(),
+            monitor_frequency=monitor_frequency,
+            trailing_duration=trailing_duration,
+            fallback_close_price=fallback_close_price
+        )
         
-        self.last_monitor_time = current_time
-        current_indicators = {}
-        
-        # Calculate OBI using trailing_obi method
-        if hasattr(self.data, 'df'):
-            data_bento = DataBento()
-            trailing_df = data_bento.get_trailing_ticks(df=self.data.df, current_index=self.iteration-1, trailing_duration=trailing_duration)
-            
-            indicator_rules = [
-            {
-                'name': 'obi',
-                'type': 'obi',
-                'depth': 10
-            },
-            {
-                'name': 'volume',
-                'type': 'volume',
-            },
-            {
-                'name': 'cancelations',
-                'type': 'cancelations',
-                'action_column': 'action',
-                'cancel_value': 'C'
-            },
-            {
-                'name': 'spread',
-                'type': 'spread',
-                'bid_column': 'bid_px_00',
-                'ask_column': 'ask_px_00'
-            }
-            ]
-            results = run_trailing_indicators(trailing_df, indicator_rules)
-
-            current_indicators['obi'] = results['obi']
-            current_indicators['volume'] = results['volume']
-            current_indicators['cancelations'] = results['cancelations']
-            current_indicators['spread'] = results['spread']
-            
-            # Update OBI history
-            self.indicators_history['obi'].append(results['obi'])
-            if len(self.indicators_history['obi']) > self.max_history_length:
-                self.indicators_history['obi'].pop(0)
-            # Update volume history
-            self.indicators_history['volume'].append(results['volume'])
-            if len(self.indicators_history['volume']) > self.max_history_length:
-                self.indicators_history['volume'].pop(0)
-            # Update cancelations history
-            self.indicators_history['cancelations'].append(results['cancelations'])
-            if len(self.indicators_history['cancelations']) > self.max_history_length:
-                self.indicators_history['cancelations'].pop(0)
-            # Update cancelations history
-            self.indicators_history['spread'].append(results['spread'])
-            if len(self.indicators_history['spread']) > self.max_history_length:
-                self.indicators_history['spread'].pop(0)
+        # Update indicators history if we got new indicators
+        if current_indicators is not None:
+            self.indicators_history = update_indicators_history(
+                self.indicators_history, 
+                current_indicators, 
+                self.max_history_length
+            )
         
         return current_indicators
     
@@ -197,10 +158,10 @@ class ObiStrategy(Strategy):
         self.iteration += 1
         
         # Monitor indicators every second with 1-second trailing duration
-        current_indicators = self.monitor_indicators(monitor_frequency=3.0, trailing_duration=3.0)
+        current_indicators = self.monitor_indicators_wrapper(monitor_frequency=30.0, trailing_duration=3.0)
             
         if current_indicators:
-            spread = self.data_bento.get_current_spread(self.data_manager, iteration=self.iteration)
+
             # Volume surge detection
             high_volume_warning=False
             if current_indicators['volume'] > np.mean(self.indicators_history['volume']) * 3:
@@ -210,6 +171,7 @@ class ObiStrategy(Strategy):
             high_cancelation_warning=False
             spread_change = linear_regression(self.indicators_history['spread'])
             cancelations_change = linear_regression(self.indicators_history['cancelations'])
+            price_change = linear_regression(self.indicators_history['price'])
             if spread_change > 0.2 :
                 high_spread_warning=True
             if cancelations_change > 0.2:
@@ -226,57 +188,63 @@ class ObiStrategy(Strategy):
             })
             self.iteration_data = pd.concat([self.iteration_data, new_row], ignore_index=True)
 
+            if price_change > 0.07 or price_change < -0.07:
+                print_indicators_history(self.data.index[-1], self.indicators_history)
             
-            # STOP LOSS CONDITIONS
-            if self.position:
-                stop_loss_triggered = False
+            # # STOP LOSS CONDITIONS
+            # elif self.position:
+            #     stop_loss_triggered = False
                 
-                # Stop loss 1: Strong downtrend detected
-                if obi_trend_class == "strong_downtrend" and high_volume_warning: #and high_spread_warning and high_cancelation_warning:
-                    stop_loss_triggered = True
-                    print("STOP LOSS: Strong OBI downtrend detected")
+            #     # Stop loss 1: Strong downtrend detected
+            #     if obi_trend_class == "strong_downtrend" and high_volume_warning: #and high_spread_warning and high_cancelation_warning:
+            #         stop_loss_triggered = True
+            #         print("STOP LOSS: Strong OBI downtrend detected")
+            #         # Print indicators history when strong downtrend is detected
+            #         print_indicators_history(self.data.index[-1], self.indicators_history)
                 
-                if stop_loss_triggered:
-                    current_idx = min(self.iteration - 1, len(self.data_manager['ts_event_dt']) - 1)
-                    current_close = self.data.Close[current_idx]
-                    bid, ask = self.data_bento.get_current_bid_ask(self.data_manager, current_idx, self.iteration)
-                    reference_price = bid if bid is not None else current_close
-                    effective_price = calculate_effective_price('close', abs(self.position.size), current_idx, self.data_manager, self.data, self.data_bento, self.iteration)
-                    execution_spread = abs(reference_price - effective_price) / reference_price
+            #     if stop_loss_triggered:
+            #         current_idx = min(self.iteration - 1, len(self.data_manager['ts_event_dt']) - 1)
+            #         current_close = self.data.Close[current_idx]
+            #         bid, ask = self.data_bento.get_current_bid_ask(self.data_manager, current_idx, self.iteration)
+            #         reference_price = bid if bid is not None else current_close
+            #         effective_price = calculate_effective_price('close', abs(self.position.size), current_idx, self.data_manager, self.data, self.data_bento, self.iteration)
+            #         execution_spread = abs(reference_price - effective_price) / reference_price
 
-                    self.position.close(spread=execution_spread)
-                    print(f"EXECUTION DETAILS:")
-                    print(f"  Reference Buy Price: ${reference_price}")
-                    print(f"  Effective Buy Price: ${effective_price:.4f}")
-                    print(f"  Execution Spread: {(execution_spread*100):.4f}%")
-                    return
+            #         self.position.close(spread=execution_spread)
+            #         print(f"EXECUTION DETAILS:")
+            #         print(f"  Reference Buy Price: ${reference_price}")
+            #         print(f"  Effective Buy Price: ${effective_price:.4f}")
+            #         print(f"  Execution Spread: {(execution_spread*100):.4f}%")
+            #         return
             
-            # BUY CONDITIONS
-            if not self.position:
-                buy_signal = False
-                buy_reason = ""
+            # # BUY CONDITIONS
+            # if not self.position:
+            #     buy_signal = False
+            #     buy_reason = ""
                 
-                # Buy condition 2: Strong uptrend with positive OBI
-                if obi_trend_class == "strong_uptrend" and current_obi > 0.2 and high_volume_warning:
-                    buy_signal = True
-                    buy_reason = "Strong OBI uptrend"
+            #     # Buy condition 2: Strong uptrend with positive OBI
+            #     if obi_trend_class == "strong_uptrend" and current_obi > 0.2 and high_volume_warning:
+            #         buy_signal = True
+            #         buy_reason = "Strong OBI uptrend"
+            #         # Print indicators history when strong uptrend is detected
+            #         print_indicators_history(self.data.index[-1], self.indicators_history)
                 
-                if buy_signal:
-                    # Calculate effective buy price for a standard order size (e.g., $10000 worth)
-                    current_idx = min(self.iteration - 1, len(self.data_manager['ts_event_dt']) - 1)
-                    current_close = self.data.Close[current_idx]
-                    estimated_shares = 10000 / current_close  # $10000 worth of shares
-                    effective_price = calculate_effective_price('buy', int(estimated_shares), current_idx, self.data_manager, self.data, self.data_bento, self.iteration)
+            #     if buy_signal:
+            #         # Calculate effective buy price for a standard order size (e.g., $10000 worth)
+            #         current_idx = min(self.iteration - 1, len(self.data_manager['ts_event_dt']) - 1)
+            #         current_close = self.data.Close[current_idx]
+            #         estimated_shares = 10000 / current_close  # $10000 worth of shares
+            #         effective_price = calculate_effective_price('buy', int(estimated_shares), current_idx, self.data_manager, self.data, self.data_bento, self.iteration)
                     
-                    # Use current ask price as reference for spread calculation
-                    bid, ask = self.data_bento.get_current_bid_ask(self.data_manager, current_idx, self.iteration)
-                    reference_price = ask if ask is not None else current_close
-                    execution_spread = abs(reference_price - effective_price) / reference_price
+            #         # Use current ask price as reference for spread calculation
+            #         bid, ask = self.data_bento.get_current_bid_ask(self.data_manager, current_idx, self.iteration)
+            #         reference_price = ask if ask is not None else current_close
+            #         execution_spread = abs(reference_price - effective_price) / reference_price
                     
-                    self.buy(spread=execution_spread)
-                    print(f"BUY SIGNAL: {buy_reason}")
+            #         self.buy(spread=execution_spread)
+            #         print(f"BUY SIGNAL: {buy_reason}")
                     
-                    print(f"EXECUTION DETAILS:")
-                    print(f"  Reference Ask Price: ${reference_price:.4f}")
-                    print(f"  Effective Buy Price: ${effective_price:.4f}")
-                    print(f"  Execution Spread: {(execution_spread*100):.4f}%")
+            #         print(f"EXECUTION DETAILS:")
+            #         print(f"  Reference Ask Price: ${reference_price:.4f}")
+            #         print(f"  Effective Buy Price: ${effective_price:.4f}")
+            #         print(f"  Execution Spread: {(execution_spread*100):.4f}%")
