@@ -86,21 +86,22 @@ class PriceStrategy(Strategy):
 
         self.iteration += 1
 
-        current_indicators = self.monitor_indicators(monitor_frequency=3.0, trailing_duration=3.0)
+        current_indicators = self.monitor_indicators(monitor_frequency=10.0, trailing_duration=10.0)
 
         if current_indicators:
+
+            price_change = linear_regression(self.indicators_history['price'])
             # Append current values to plot DataFrame
             new_row = pd.DataFrame([{
                 'time': self.data.index[-1],
                 'price': current_indicators['price'],
+                'price_trend': price_change,
                 'obi': current_indicators['obi'],
                 'cancelations': current_indicators['cancelations'],
                 'volume': current_indicators['volume'],
             }])
             self.plot_data = pd.concat([self.plot_data, new_row], ignore_index=True)
-
-            price_change = linear_regression(self.indicators_history['price'])
-
+            
             if price_change > 0.02 or price_change < -0.02:
                 print_indicators_history(self.data.index[-1], price_change, self.indicators_history)
 
@@ -116,7 +117,7 @@ class PriceStrategy(Strategy):
         p = Plot(self.plot_data)
         p.show(
             x='time',
-            y_lines=['price', 'obi'],
+            y_lines=['price', 'price_trend', 'obi', 'cancelations'],
             bar_column='volume',
             title='Price & OBI with Volume',
         )

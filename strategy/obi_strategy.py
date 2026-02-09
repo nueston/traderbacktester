@@ -207,7 +207,7 @@ class ObiStrategy(Strategy):
         self.iteration += 1
         
         # Monitor indicators every second with 1-second trailing duration
-        current_indicators = self.monitor_indicators(monitor_frequency=3.0, trailing_duration=3.0)
+        current_indicators = self.monitor_indicators(monitor_frequency=10.0, trailing_duration=10.0)
             
         if current_indicators:
             spread = self.data_bento.get_current_spread(self.data_manager, iteration=self.iteration)
