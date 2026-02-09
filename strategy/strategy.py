@@ -2,6 +2,7 @@ from backtesting import Strategy
 from backtesting.test import SMA
 from backtesting.lib import crossover
 import pandas as pd
+from data.data_ohlc_bento import DataOhlcBento
 
 
 class StrFull(Strategy):
@@ -48,6 +49,10 @@ class BentoStrategy(Strategy):
         close = self.data.Close
         self.sma_fast = self.I(SMA, close, 5)
         self.sma_slow = self.I(SMA, close, 20)
+        
+        # Initialize DataOhlcBento manager
+        self.data_manager = DataOhlcBento(self.data.df)
+        self.iteration = 0
         
     def get_bento_data(self, column_name):
         """Helper method to access Bento-specific columns"""
@@ -99,9 +104,13 @@ class BentoStrategy(Strategy):
         if len(self.data.Close) < 21:
             return
         
-        # Get market microstructure data
+        # Update data manager current index
+        self.data_manager.set_current_index(self.iteration)
+        self.iteration += 1
+        
+        # Get market microstructure data using DataOhlcBento
         bid, ask = self.get_current_bid_ask()
-        spread = self.get_current_spread()
+        spread = self.data_manager.get_current_spread()
         
         # Strategy logic using both technical indicators and market microstructure
         if (crossover(self.sma_fast, self.sma_slow) and 
@@ -125,24 +134,27 @@ class LiquidityMonitorStrategy(Strategy):
     """
     
     # Configurable parameters
-    monitor_period = 10  # Number of iterations to monitor
-    wait_period = 10     # Number of iterations to do nothing at start
+    monitor_period = 20  # Number of iterations to monitor
+    wait_period = 20     # Number of iterations to do nothing at start
     
     # Exit conditions (sell)
-    bid_decrease_threshold = 0.60  # 60% decrease in bid liquidity
-    spread_increase_threshold = 0.30  # 30% spread increase
-    volume_increase_threshold = 0.30  # 30% volume increase
+    bid_decrease_threshold = 0.6  # *100%
+    spread_increase_threshold = 0.05  # 30% spread increase
+    volume_increase_threshold = 5  # *100%
     exit_percentage = 0.40  # Close 40% of position
     
     # Entry conditions (buy)
-    bid_increase_threshold = 0.60  # 60% increase in bid liquidity
+    bid_increase_threshold = 4  # *100%
     spread_increase_buy_threshold = 0.30  # 30% spread increase for buy
-    volume_increase_buy_threshold = 0.30  # 30% volume increase for buy
+    volume_increase_buy_threshold = 5  # 30% volume increase for buy
     buy_percentage = 0.40  # Buy amount as percentage of cash
     
     def init(self):
         # Buy at initialization
         self.buy()
+        
+        # Initialize DataOhlcBento manager
+        self.data_manager = DataOhlcBento(self.data.df)
         
         # Initialize tracking arrays
         self.bid_liquidity_history = []
@@ -159,12 +171,7 @@ class LiquidityMonitorStrategy(Strategy):
     
     def get_total_bid_liquidity(self):
         """Calculate total bid liquidity across all depth levels (0-9)"""
-        total_bid_liquidity = 0
-        for level in range(10):  # Levels 0-9
-            bid_size = self.get_bento_data(f'bid_sz_{level:02d}')
-            if bid_size is not None and len(bid_size) > 0:
-                total_bid_liquidity += bid_size.iloc[-1] if not pd.isna(bid_size.iloc[-1]) else 0
-        return total_bid_liquidity
+        return self.data_manager.get_total_bid_liquidity(level=10, iterations=1)
     
     def get_current_spread(self):
         """Get current bid-ask spread"""
@@ -174,51 +181,52 @@ class LiquidityMonitorStrategy(Strategy):
     
     def get_current_volume(self):
         """Get current volume"""
-        return self.data.Volume[-1]
+        return self.data_manager.get_volume(iteration=1)
     
     def check_liquidity_deterioration(self):
         """
         Check if liquidity has deteriorated significantly over the monitoring period
         Returns True if all conditions are met for position exit
         """
-        if len(self.bid_liquidity_history) < self.monitor_period:
+        if self.iteration_count < self.monitor_period:
             return False
         
-        # Get recent data (last monitor_period values)
-        recent_bid_liquidity = self.bid_liquidity_history[-self.monitor_period:]
+        # Get liquidity trend using DataOhlcBento
+        trend_data = self.data_manager.get_liquidity_trend(current_index=self.iteration_count-1, iterations=self.monitor_period)
+        
+        if not trend_data:
+            return False
+        
+        # Extract trend percentages (negative values indicate decrease)
+        bid_trend = trend_data['bid_trend']
+        
+        # Get spread and volume changes from recent history
+        if len(self.spread_history) < self.monitor_period or len(self.volume_history) < self.monitor_period:
+            return False
+            
         recent_spreads = self.spread_history[-self.monitor_period:]
         recent_volumes = self.volume_history[-self.monitor_period:]
         
-        # Calculate changes from start to end of monitoring period
-        bid_start = recent_bid_liquidity[0]
-        bid_end = recent_bid_liquidity[-1]
         spread_start = recent_spreads[0]
         spread_end = recent_spreads[-1]
         volume_start = recent_volumes[0]
         volume_end = recent_volumes[-1]
         
         # Avoid division by zero
-        if bid_start == 0 or spread_start == 0 or volume_start == 0:
+        if spread_start == 0 or volume_start == 0:
             return False
         
         # Calculate percentage changes
-        bid_change = (bid_start - bid_end) / bid_start  # Decrease (positive value means decrease)
-        spread_change = (spread_end - spread_start) / spread_start  # Increase
-        volume_change = (volume_end - volume_start) / volume_start  # Increase
+        spread_change = ((spread_end - spread_start) / spread_start) * 100  # 
+        volume_change = ((volume_end - volume_start) / volume_start) * 100  # 
         
-        # Check all conditions
-        bid_condition = bid_change >= self.bid_decrease_threshold
-        spread_condition = spread_change >= self.spread_increase_threshold
-        volume_condition = volume_change >= self.volume_increase_threshold
+        # Check all conditions (bid decrease, spread increase, volume increase)
+        bid_condition = bid_trend <= -(self.bid_decrease_threshold * 100)  # 
+        spread_condition = spread_change >= (self.spread_increase_threshold * 100)  # 
+        volume_condition = volume_change >= (self.volume_increase_threshold * 100)  # 
         
-        # Debug output
-        if bid_condition or spread_condition or volume_condition:
-            pass
-            #print(f"Liquidity Check - Iteration {self.iteration_count}")
-            #print(f"  Bid decrease: {bid_change:.2%} (threshold: {self.bid_decrease_threshold:.2%}) - {'✓' if bid_condition else '✗'}")
-            #print(f"  Spread increase: {spread_change:.2%} (threshold: {self.spread_increase_threshold:.2%}) - {'✓' if spread_condition else '✗'}")
-            #print(f"  Volume increase: {volume_change:.2%} (threshold: {self.volume_increase_threshold:.2%}) - {'✓' if volume_condition else '✗'}")
-        
+        if bid_condition and volume_condition:
+            print(f" bid : spread : volume : {bid_condition} : {spread_condition} : {volume_condition}")
         return bid_condition and spread_condition and volume_condition
     
     def check_liquidity_improvement(self):
@@ -226,43 +234,42 @@ class LiquidityMonitorStrategy(Strategy):
         Check if liquidity has improved significantly over the monitoring period
         Returns True if all conditions are met for position entry
         """
-        if len(self.bid_liquidity_history) < self.monitor_period:
+        if self.iteration_count < self.monitor_period:
             return False
         
-        # Get recent data (last monitor_period values)
-        recent_bid_liquidity = self.bid_liquidity_history[-self.monitor_period:]
+        # Get liquidity trend using DataOhlcBento
+        trend_data = self.data_manager.get_liquidity_trend(current_index=self.iteration_count-1, iterations=self.monitor_period)
+        
+        if not trend_data:
+            return False
+        
+        # Extract trend percentages (positive values indicate increase)
+        bid_trend = trend_data['bid_trend']
+        
+        # Get spread and volume changes from recent history
+        if len(self.spread_history) < self.monitor_period or len(self.volume_history) < self.monitor_period:
+            return False
+            
         recent_spreads = self.spread_history[-self.monitor_period:]
         recent_volumes = self.volume_history[-self.monitor_period:]
         
-        # Calculate changes from start to end of monitoring period
-        bid_start = recent_bid_liquidity[0]
-        bid_end = recent_bid_liquidity[-1]
         spread_start = recent_spreads[0]
         spread_end = recent_spreads[-1]
         volume_start = recent_volumes[0]
         volume_end = recent_volumes[-1]
         
         # Avoid division by zero
-        if bid_start == 0 or spread_start == 0 or volume_start == 0:
+        if spread_start == 0 or volume_start == 0:
             return False
         
         # Calculate percentage changes
-        bid_change = (bid_end - bid_start) / bid_start  # Increase (positive value means increase)
-        spread_change = (spread_end - spread_start) / spread_start  # Increase
-        volume_change = (volume_end - volume_start) / volume_start  # Increase
+        spread_change = ((spread_end - spread_start) / spread_start) * 100  # Increase
+        volume_change = ((volume_end - volume_start) / volume_start) * 100  # Increase
         
-        # Check all conditions
-        bid_condition = bid_change >= self.bid_increase_threshold
-        spread_condition = spread_change >= self.spread_increase_buy_threshold
-        volume_condition = volume_change >= self.volume_increase_buy_threshold
-        
-        # Debug output
-        if bid_condition or spread_condition or volume_condition:
-            pass
-            #print(f"Liquidity Improvement Check - Iteration {self.iteration_count}")
-            #print(f"  Bid increase: {bid_change:.2%} (threshold: {self.bid_increase_threshold:.2%}) - {'✓' if bid_condition else '✗'}")
-            #print(f"  Spread increase: {spread_change:.2%} (threshold: {self.spread_increase_buy_threshold:.2%}) - {'✓' if spread_condition else '✗'}")
-            #print(f"  Volume increase: {volume_change:.2%} (threshold: {self.volume_increase_buy_threshold:.2%}) - {'✓' if volume_condition else '✗'}")
+        # Check all conditions (bid increase, spread increase, volume increase)
+        bid_condition = bid_trend >= (self.bid_increase_threshold * 100)  # 60% increase
+        spread_condition = spread_change >= (self.spread_increase_buy_threshold * 100)  # 30% increase
+        volume_condition = volume_change >= (self.volume_increase_buy_threshold * 100)  # 30% increase
         
         return bid_condition and spread_condition and volume_condition
     
@@ -283,6 +290,9 @@ class LiquidityMonitorStrategy(Strategy):
     
     def next(self):
         self.iteration_count += 1
+        
+        # Update data manager current index
+        self.data_manager.set_current_index(self.iteration_count - 1)
         
         # Do nothing for the first wait_period iterations
         if self.iteration_count <= self.wait_period:

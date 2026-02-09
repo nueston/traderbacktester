@@ -1,8 +1,12 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 from backtesting.test import SMA, GOOG
-from data_bento import DataBento
-from strategy import BentoStrategy, LiquidityMonitorStrategy
+from data.data_bento import DataBento
+from strategy.strategy import BentoStrategy, LiquidityMonitorStrategy
 import numpy as np
 import pandas as pd
 
@@ -10,7 +14,7 @@ import pandas as pd
 if __name__ == "__main__":
     
     # For Bento MBP-10 data
-    bento_file = "C:\\Users\\fy37bby\\user\\dev\misc\\backtest\\rsc\\xnas-itch-20260126.mbp-10_ONDS_filtered.csv"
+    bento_file = "C:\\Users\\fy37bby\\user\\dev\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260115.mbp-10_ONDS.csv"
     bento_loader = DataBento()
     data = bento_loader.load_bento_mbp10_data(bento_file, timeframe='1T')
     bt = Backtest(data, LiquidityMonitorStrategy, cash=10000, commission=.002, exclusive_orders=True, finalize_trades=True)
