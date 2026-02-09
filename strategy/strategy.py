@@ -9,5 +9,6 @@ Available strategies:
 """
 
 from .obi_strategy import ObiStrategy
+from .price_strategy import PriceStrategy
 
-__all__ = ['ObiStrategy']
+__all__ = ['ObiStrategy', 'PriceStrategy']

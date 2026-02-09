@@ -20,6 +20,7 @@ class ObiStrategy(Strategy):
         
         # Initialize indicators history - maintains last 10 values for each indicator
         self.indicators_history = {
+            'price' : [],
             'obi': [],
             'spread': [],
             'volume': [],
@@ -86,6 +87,10 @@ class ObiStrategy(Strategy):
             
             indicator_rules = [
             {
+                'name': 'price',
+                'type': 'price',
+            },
+            {
                 'name': 'obi',
                 'type': 'obi',
                 'depth': 10
@@ -109,11 +114,16 @@ class ObiStrategy(Strategy):
             ]
             results = run_trailing_indicators(trailing_df, indicator_rules)
 
+            current_indicators['price'] = results['price']
             current_indicators['obi'] = results['obi']
             current_indicators['volume'] = results['volume']
             current_indicators['cancelations'] = results['cancelations']
             current_indicators['spread'] = results['spread']
             
+            # Update OBI history
+            self.indicators_history['price'].append(results['price'])
+            if len(self.indicators_history['price']) > self.max_history_length:
+                self.indicators_history['price'].pop(0)
             # Update OBI history
             self.indicators_history['obi'].append(results['obi'])
             if len(self.indicators_history['obi']) > self.max_history_length:

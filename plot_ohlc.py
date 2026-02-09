@@ -10,15 +10,19 @@ class PlotOhlc:
     Class to plot OHLC data with price and size visualization
     """
     
-    def __init__(self, df):
+    def __init__(self, df, elem1='price', elem2='size'):
         """
         Initialize the PlotOhlc class with data
         
         Args:
-            df (pandas.DataFrame): DataFrame containing ts_event, price, and size columns
+            df (pandas.DataFrame): DataFrame containing ts_event and the specified columns
+            elem1 (str): Column name for the primary value (default: 'price')
+            elem2 (str): Column name for the secondary value (default: 'size')
         """
         self.df = df.copy()
-        self.prepare_data()
+        self.elem1 = elem1
+        self.elem2 = elem2
+        self.prepare_data(elem1, elem2)
     
     @classmethod
     def from_csv(cls, csv_path):
@@ -38,9 +42,13 @@ class PlotOhlc:
         df = data_bento.filter_data(df, symbol=None, exclude_cancel=True, depth_level=0, exclude_morning_minutes=None, min_size=None) 
         return cls(df)
     
-    def prepare_data(self):
+    def prepare_data(self, elem1='price', elem2='size'):
         """
         Prepare data for plotting by converting timestamps and ensuring required columns exist
+        
+        Args:
+            elem1 (str): Column name for the primary value (default: 'price')
+            elem2 (str): Column name for the secondary value (default: 'size')
         """
         # Convert ts_event to datetime if it's not already
         if 'ts_event' in self.df.columns:
@@ -49,12 +57,12 @@ class PlotOhlc:
             raise ValueError("ts_event column not found in DataFrame")
         
         # Check for required columns
-        if 'price' not in self.df.columns:
-            raise ValueError("price column not found in DataFrame")
+        if elem1 not in self.df.columns:
+            raise ValueError(f"{elem1} column not found in DataFrame")
         
-        if 'size' not in self.df.columns:
-            print("Warning: size column not found, setting default size of 1")
-            self.df['size'] = 1
+        if elem2 not in self.df.columns:
+            print(f"Warning: {elem2} column not found, setting default value of 1")
+            self.df[elem2] = 1
         
         # Sort by datetime for proper plotting
         self.df = self.df.sort_values('datetime').reset_index(drop=True)
@@ -71,29 +79,29 @@ class PlotOhlc:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, height_ratios=[3, 1], 
                                        sharex=True, gridspec_kw={'hspace': 0.05})
         
-        # Plot price on top subplot
-        ax1.plot(self.df['datetime'], self.df['price'], linewidth=1, color='blue', alpha=0.8)
-        ax1.set_ylabel('Price', fontsize=12)
+        # Plot elem1 on top subplot
+        ax1.plot(self.df['datetime'], self.df[self.elem1], linewidth=1, color='blue', alpha=0.8)
+        ax1.set_ylabel(self.elem1.capitalize(), fontsize=12)
         ax1.set_title(title, fontsize=14, fontweight='bold')
         ax1.grid(True, alpha=0.3)
         ax1.tick_params(axis='y', labelsize=10)
         
-        # Add price statistics to the plot
-        min_price = self.df['price'].min()
-        max_price = self.df['price'].max()
-        avg_price = self.df['price'].mean()
+        # Add elem1 statistics to the plot
+        min_val = self.df[self.elem1].min()
+        max_val = self.df[self.elem1].max()
+        avg_val = self.df[self.elem1].mean()
         
         # Add horizontal lines for min, max, average
-        ax1.axhline(y=min_price, color='red', linestyle='--', alpha=0.5, label=f'Min: ${min_price:.4f}')
-        ax1.axhline(y=max_price, color='green', linestyle='--', alpha=0.5, label=f'Max: ${max_price:.4f}')
-        ax1.axhline(y=avg_price, color='orange', linestyle='--', alpha=0.5, label=f'Avg: ${avg_price:.4f}')
+        ax1.axhline(y=min_val, color='red', linestyle='--', alpha=0.5, label=f'Min: {min_val:.4f}')
+        ax1.axhline(y=max_val, color='green', linestyle='--', alpha=0.5, label=f'Max: {max_val:.4f}')
+        ax1.axhline(y=avg_val, color='orange', linestyle='--', alpha=0.5, label=f'Avg: {avg_val:.4f}')
         ax1.legend(loc='upper right', fontsize=9)
         
-        # Plot size as bars on bottom subplot
+        # Plot elem2 as bars on bottom subplot
         bar_width = pd.Timedelta(minutes=1)  # Match the 1-minute resampling interval
-        ax2.bar(self.df['datetime'], self.df['size'], width=bar_width, 
+        ax2.bar(self.df['datetime'], self.df[self.elem2], width=bar_width, 
                 color='steelblue', alpha=0.7, edgecolor='darkblue', linewidth=0.5)
-        ax2.set_ylabel('Size', fontsize=12)
+        ax2.set_ylabel(self.elem2.capitalize(), fontsize=12)
         ax2.set_xlabel('Time', fontsize=12)
         ax2.grid(True, alpha=0.3)
         ax2.tick_params(axis='both', labelsize=10)
@@ -104,11 +112,11 @@ class PlotOhlc:
         plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
         
         # Add summary statistics
-        total_volume = self.df['size'].sum()
-        avg_size = self.df['size'].mean()
-        max_size = self.df['size'].max()
+        total_volume = self.df[self.elem2].sum()
+        avg_size = self.df[self.elem2].mean()
+        max_size = self.df[self.elem2].max()
         
-        stats_text = f'Total Volume: {total_volume:,.0f} | Avg Size: {avg_size:.1f} | Max Size: {max_size:,.0f}'
+        stats_text = f'Total {self.elem2.capitalize()}: {total_volume:,.0f} | Avg: {avg_size:.1f} | Max: {max_size:,.0f}'
         fig.text(0.5, 0.02, stats_text, ha='center', fontsize=10, 
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.5))
         
@@ -158,18 +166,18 @@ class PlotOhlc:
                 'end': self.df['datetime'].max(),
                 'duration': self.df['datetime'].max() - self.df['datetime'].min()
             },
-            'price_stats': {
-                'min': self.df['price'].min(),
-                'max': self.df['price'].max(),
-                'mean': self.df['price'].mean(),
-                'std': self.df['price'].std(),
-                'range': self.df['price'].max() - self.df['price'].min()
+            f'{self.elem1}_stats': {
+                'min': self.df[self.elem1].min(),
+                'max': self.df[self.elem1].max(),
+                'mean': self.df[self.elem1].mean(),
+                'std': self.df[self.elem1].std(),
+                'range': self.df[self.elem1].max() - self.df[self.elem1].min()
             },
-            'size_stats': {
-                'total_volume': self.df['size'].sum(),
-                'avg_size': self.df['size'].mean(),
-                'max_size': self.df['size'].max(),
-                'min_size': self.df['size'].min()
+            f'{self.elem2}_stats': {
+                'total': self.df[self.elem2].sum(),
+                'avg': self.df[self.elem2].mean(),
+                'max': self.df[self.elem2].max(),
+                'min': self.df[self.elem2].min()
             }
         }
         return stats

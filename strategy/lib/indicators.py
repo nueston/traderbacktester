@@ -19,6 +19,33 @@ class BaseIndicator:
         raise NotImplementedError
 
 
+class PriceIndicator(BaseIndicator):
+    """average"""
+    
+    def __init__(self, name, price_column='price', **kwargs):
+        super().__init__(name, **kwargs)
+        self.price_column = price_column
+        self.values = []
+    
+    def initialize(self):
+        self.values = []
+    
+    def process_row(self, row, trailing_df):
+        # Try different possible price columns
+        price_columns = [self.price_column, 'price']
+        
+        for col in price_columns:
+            price_value = row[col]
+            if price_value > 0:
+                self.values.append(price_value)
+            break
+    
+    def finalize(self):
+        if len(self.values) > 0:
+            return sum(self.values) / len(self.values)
+        else:
+            return 0.0
+        
 class OBIIndicator(BaseIndicator):
     """Order Book Imbalance indicator - Optimized with vectorized operations"""
     
@@ -110,7 +137,7 @@ class OBIIndicatorVectorized(BaseIndicator):
 
 
 class CancelationIndicator(BaseIndicator):
-    """Cancelation counting indicator"""
+    """sum"""
     
     def __init__(self, name, action_column='action', cancel_value='C', **kwargs):
         super().__init__(name, **kwargs)
@@ -131,7 +158,7 @@ class CancelationIndicator(BaseIndicator):
 
 
 class VolumeIndicator(BaseIndicator):
-    """Volume indicator that calculates mean size"""
+    """mean"""
     
     def __init__(self, name, size_column='size', **kwargs):
         super().__init__(name, **kwargs)
@@ -155,7 +182,7 @@ class VolumeIndicator(BaseIndicator):
 
 
 class SpreadIndicator(BaseIndicator):
-    """Spread indicator that calculates bid-ask spread"""
+    """average"""
     
     def __init__(self, name, bid_column='bid_px_00', ask_column='ask_px_00', **kwargs):
         super().__init__(name, **kwargs)
@@ -194,7 +221,9 @@ class IndicatorFactory:
         
         # Create a copy of rule without 'name' and 'type' to avoid parameter conflicts
         kwargs = {k: v for k, v in rule.items() if k not in ['name', 'type']}
-        
+
+        if indicator_type == 'price':
+            return PriceIndicator(name, **kwargs)
         if indicator_type == 'obi':
             return OBIIndicator(name, **kwargs)
         elif indicator_type == 'cancelations':
