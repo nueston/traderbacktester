@@ -237,56 +237,75 @@ class DataBento:
         
         return price_series
     
-    def smooth_price_jumps(self, df, max_jump_percentage):
+    def smooth_values(self, df, max_jump_percentage, column_names=['price']):
         """
-        Smooth price jumps by replacing prices that jump more than the specified percentage
-        with the previous value
+        Smooth data jumps by replacing values that jump more than the specified percentage
+        with the previous value for multiple columns
         
         Args:
-            df (pandas.DataFrame): Input DataFrame with price data
-            max_jump_percentage (float): Maximum allowed percentage jump between consecutive prices
+            df (pandas.DataFrame): Input DataFrame with data
+            max_jump_percentage (float): Maximum allowed percentage jump between consecutive values
+            column_names (list): List of column names to smooth ('price', 'size', etc.). 
+                               Default is ['price'] which uses micro price calculation
             
         Returns:
-            pandas.DataFrame: DataFrame with smoothed prices
+            pandas.DataFrame: DataFrame with smoothed values
         """
         df_copy = df.copy()
         
-        # Calculate micro price for the analysis
-        try:
-            price_series = self.get_micro_price(df_copy)
-            df_copy['current_price'] = price_series
-        except ValueError:
-            # If micro price calculation fails, try to use existing price column
-            if 'price' in df_copy.columns:
-                df_copy['current_price'] = df_copy['price']
+        # Process each column in the list
+        for column_name in column_names:
+            # Get the data series to analyze based on column_name
+            if column_name == 'price':
+                # Special handling for price - try to calculate micro price
+                try:
+                    data_series = self.get_micro_price(df_copy)
+                    df_copy['current_value'] = data_series
+                    # Also store weighted_price for later updates
+                    df_copy['weighted_price'] = data_series
+                except ValueError:
+                    # If micro price calculation fails, try to use existing price column
+                    if 'price' in df_copy.columns:
+                        df_copy['current_value'] = df_copy['price']
+                    else:
+                        print(f"Warning: Cannot calculate or find price data for smoothing, skipping column '{column_name}'")
+                        continue
             else:
-                raise ValueError("Cannot calculate or find price data for smoothing")
-        
-        # Calculate percentage change between consecutive prices
-        df_copy['price_pct_change'] = df_copy['current_price'].pct_change() * 100
-        
-        # Identify jumps that exceed the threshold
-        jump_mask = abs(df_copy['price_pct_change']) > max_jump_percentage
-        
-        # Replace excessive jumps with previous value
-        if jump_mask.any():
-            for idx in df_copy[jump_mask].index:
-                if idx > 0:  # Skip first row as it has no previous value
-                    prev_idx = df_copy.index[df_copy.index.get_loc(idx) - 1]
-                    
-                    # Update the weighted_price if it exists, or create it
-                    if 'weighted_price' in df_copy.columns:
-                        df_copy.loc[idx, 'weighted_price'] = df_copy.loc[prev_idx, 'current_price']
-                    
-                    # Also update current_price for consistency
-                    df_copy.loc[idx, 'current_price'] = df_copy.loc[prev_idx, 'current_price']
+                # For other columns, use them directly
+                if column_name not in df_copy.columns:
+                    print(f"Warning: Column '{column_name}' not found in DataFrame, skipping")
+                    continue
+                df_copy['current_value'] = df_copy[column_name]
             
-            if isLogging:
-                jump_count = jump_mask.sum()
-                print(f"Smoothed {jump_count} price jumps exceeding {max_jump_percentage}%")
-        
-        # Clean up temporary columns
-        df_copy.drop(['current_price', 'price_pct_change'], axis=1, inplace=True, errors='ignore')
+            # Calculate percentage change between consecutive values
+            df_copy['value_pct_change'] = df_copy['current_value'].pct_change() * 100
+            
+            # Identify jumps that exceed the threshold
+            jump_mask = abs(df_copy['value_pct_change']) > max_jump_percentage
+            
+            # Replace excessive jumps with previous value
+            if jump_mask.any():
+                for idx in df_copy[jump_mask].index:
+                    if idx > 0:  # Skip first row as it has no previous value
+                        prev_idx = df_copy.index[df_copy.index.get_loc(idx) - 1]
+                        
+                        if column_name == 'price':
+                            # Update the weighted_price if it exists
+                            if 'weighted_price' in df_copy.columns:
+                                df_copy.loc[idx, 'weighted_price'] = df_copy.loc[prev_idx, 'current_value']
+                        else:
+                            # Update the original column for non-price columns
+                            df_copy.loc[idx, column_name] = df_copy.loc[prev_idx, 'current_value']
+                        
+                        # Also update current_value for consistency
+                        df_copy.loc[idx, 'current_value'] = df_copy.loc[prev_idx, 'current_value']
+                
+                if isLogging:
+                    jump_count = jump_mask.sum()
+                    print(f"Smoothed {jump_count} {column_name} jumps exceeding {max_jump_percentage}%")
+            
+            # Clean up temporary columns for this iteration
+            df_copy.drop(['current_value', 'value_pct_change'], axis=1, inplace=True, errors='ignore')
         
         return df_copy
     
@@ -423,7 +442,7 @@ class DataBento:
         # Read Bento CSV with semicolon separator
         df = self.load_csv(filename)
         df = self.filter_data(df, symbol=symbol, exclude_cancel=False, depth_level=None, exclude_morning_minutes=10, min_size=20)   
-        df = self.smooth_price_jumps(df, 0.5)
+        df = self.smooth_values(df, 0.5)
 
         # Filter by symbol if specified
         if symbol:
@@ -478,6 +497,130 @@ class DataBento:
             print(f"Available Bento columns: {len([col for col in ohlcv.columns if col.startswith('bento_')])}")
             
         return ohlcv
+    
+    def get_trailing_ticks(self, df, current_index, trailing_duration):
+        """
+        Efficiently get trailing tick data using ts_event_dt column with optimized pandas operations
+        
+        Args:
+            df (pd.DataFrame): DataFrame containing tick data with ts_event_dt column
+            current_index (int): Current index reference point
+            trailing_duration (float): Duration in seconds to look back from current_index time
+            
+        Returns:
+            pd.DataFrame: Filtered DataFrame containing ticks within the trailing time window
+        """
+        if current_index < 0 or current_index >= len(df):
+            return pd.DataFrame()
+        
+        # Ensure ts_event_dt is datetime type (do this once if not already done)
+        if not hasattr(self, '_ts_converted') or self._ts_converted_df_id != id(df):
+            if not pd.api.types.is_datetime64_any_dtype(df['ts_event_dt']):
+                # Convert entire column at once for maximum efficiency
+                df['ts_event_dt'] = pd.to_datetime(df['ts_event_dt'], errors='coerce', utc=True)
+            self._ts_converted = True
+            self._ts_converted_df_id = id(df)
+        
+        # Get current timestamp directly from the dataframe
+        current_time = df['ts_event_dt'].iloc[current_index]
+        
+        # Calculate start time for the trailing window
+        start_time = current_time - pd.Timedelta(seconds=trailing_duration)
+        
+        # Use efficient pandas indexing with loc to slice only the relevant portion
+        # This leverages pandas' optimized time-based indexing when possible
+        max_lookback = max(0, current_index - int(trailing_duration * 1000))  # Conservative estimate
+        relevant_slice = df.iloc[max_lookback:current_index + 1]
+        
+        # Apply time filter using vectorized operations
+        time_mask = relevant_slice['ts_event_dt'] >= start_time
+        
+        # Return filtered results efficiently
+        return relevant_slice[time_mask].copy()
+        
+    def get_trailing_ticks_ultra_fast(self, df, current_index, trailing_duration):
+        """
+        Ultra-fast version that uses row-based lookback instead of timestamp parsing
+        Sacrifices some precision for maximum speed
+        
+        Args:
+            df (pd.DataFrame): DataFrame containing tick data
+            current_index (int): Current index reference point  
+            trailing_duration (float): Duration in seconds to look back
+            
+        Returns:
+            pd.DataFrame: Recent tick data based on estimated row count
+        """
+        if current_index < 0 or current_index >= len(df):
+            return pd.DataFrame()
+        
+        # Simple row-based approach - much faster than timestamp parsing
+        # Conservative estimate: 100-500 ticks per second depending on market activity
+        estimated_ticks_per_sec = 200  # Adjustable based on your data characteristics
+        lookback_rows = min(int(trailing_duration * estimated_ticks_per_sec), current_index + 1)
+        start_idx = max(0, current_index + 1 - lookback_rows)
+        
+        return df.iloc[start_idx:current_index + 1].copy()
+        
+    def get_trailing_ticks_cached(self, df, current_index, trailing_duration):
+        """
+        Cached version for repeated calls with overlapping time windows
+        Stores recent conversions to avoid repeated timestamp parsing
+        """
+        # Simple cache key
+        df_id = id(df)
+        cache_key = (df_id, current_index, trailing_duration)
+        
+        # Simple cache (could be enhanced with LRU cache)
+        if not hasattr(self, '_trailing_cache'):
+            self._trailing_cache = {}
+        
+        if cache_key in self._trailing_cache:
+            return self._trailing_cache[cache_key]
+        
+        # Calculate result
+        result = self.get_trailing_ticks(df, current_index, trailing_duration)
+        
+        # Store in cache (limit cache size)
+        if len(self._trailing_cache) > 100:  # Simple size limit
+            # Clear half the cache
+            keys_to_remove = list(self._trailing_cache.keys())[:50]
+            for key in keys_to_remove:
+                del self._trailing_cache[key]
+        
+        self._trailing_cache[cache_key] = result
+        return result
+    
+    def get_current_bid_ask(self, data_manager, current_idx=None, iteration=None):
+        """Get current best bid and ask prices"""
+        bid = data_manager['bid_px_00']
+        ask = data_manager['ask_px_00']
+        if bid is not None and ask is not None:
+            if current_idx is None and iteration is not None:
+                current_idx = min(iteration - 1, len(bid) - 1)
+            elif current_idx is None:
+                current_idx = len(bid) - 1
+            return bid.iloc[current_idx] if len(bid) > 0 else None, ask.iloc[current_idx] if len(ask) > 0 else None
+        return None, None
+    
+    def get_current_spread(self, data_manager, current_idx=None, iteration=None):
+        """Get current bid-ask spread"""
+        bid, ask = self.get_current_bid_ask(data_manager, current_idx, iteration)
+        if bid is not None and ask is not None:
+            return abs(bid - ask)
+        return None
+    
+    def get_market_depth(self, data_manager, level=0, current_idx=None, iteration=None):
+        """Get bid/ask size at specific depth level"""
+        bid_size = data_manager[f'bid_sz_{level:02d}']
+        ask_size = data_manager[f'ask_sz_{level:02d}']
+        if bid_size is not None and ask_size is not None:
+            if current_idx is None and iteration is not None:
+                current_idx = min(iteration - 1, len(bid_size) - 1)
+            elif current_idx is None:
+                current_idx = len(bid_size) - 1
+            return bid_size.iloc[current_idx] if len(bid_size) > 0 else 0, ask_size.iloc[current_idx] if len(ask_size) > 0 else 0
+        return 0, 0
 
 if __name__ == "__main__":
     # Create DataBento instance

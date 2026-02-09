@@ -34,6 +34,7 @@ class PlotOhlc:
         data_bento = DataBento()
         df = data_bento.load_csv(csv_path)
         df = data_bento.resample_data(df, "1s")
+        df = data_bento.smooth_values(df, 10, ["size"])
         df = data_bento.filter_data(df, symbol=None, exclude_cancel=True, depth_level=0, exclude_morning_minutes=None, min_size=None) 
         return cls(df)
     

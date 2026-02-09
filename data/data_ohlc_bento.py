@@ -2,6 +2,11 @@
 import pandas as pd
 import numpy as np
 
+try:
+    from .data_bento import DataBento
+except ImportError:
+    from data_bento import DataBento
+
 
 class DataOhlcBento:
     def __init__(self, ohlcv_data):
@@ -253,3 +258,62 @@ class DataOhlcBento:
         if current_index < len(self.ohlcv):
             return self.ohlcv.iloc[current_index]
         return None
+    
+    def trailing_obi(self, df, current_index, trailing_duration=1.0, depth=10):
+        """
+        Calculate Order Book Imbalance (OBI) for trailing duration across specified depth levels
+        
+        OBI = (bid_size - ask_size) / (bid_size + ask_size)
+        
+        Args:
+            df (pd.DataFrame): DataFrame containing tick data
+            current_index (int): Current index reference point
+            trailing_duration (float): Duration in seconds to look back from current_index time
+            depth (int): Number of depth levels to include (0 to depth-1)
+            
+        Returns:
+            float: Average OBI across all depth levels for the trailing duration
+        """
+        # Create DataBento instance to access get_trailing_ticks method
+        data_bento = DataBento()
+        
+        # Get trailing ticks for the specified duration
+        trailing_df = data_bento.get_trailing_ticks(df, current_index, trailing_duration)
+        
+        if len(trailing_df) == 0:
+            return 0.0
+        
+        obi_values = []
+        
+        # Calculate OBI for each tick in the trailing data
+        for idx, row in trailing_df.iterrows():
+            tick_obi_sum = 0.0
+            valid_levels = 0
+            
+            # Calculate OBI for each depth level
+            for level in range(depth):
+                bid_col = f'bid_sz_{level:02d}'
+                ask_col = f'ask_sz_{level:02d}'
+                
+                # Check if columns exist
+                if bid_col in trailing_df.columns and ask_col in trailing_df.columns:
+                    bid_size = row[bid_col] if not pd.isna(row[bid_col]) else 0
+                    ask_size = row[ask_col] if not pd.isna(row[ask_col]) else 0
+                    
+                    # Calculate OBI for this level
+                    total_size = bid_size + ask_size
+                    if total_size > 0:
+                        level_obi = (bid_size - ask_size) / total_size
+                        tick_obi_sum += level_obi
+                        valid_levels += 1
+            
+            # Average OBI across all valid levels for this tick
+            if valid_levels > 0:
+                tick_avg_obi = tick_obi_sum / valid_levels
+                obi_values.append(tick_avg_obi)
+        
+        # Return average OBI across all ticks in the trailing duration
+        if len(obi_values) > 0:
+            return sum(obi_values) / len(obi_values)
+        else:
+            return 0.0
