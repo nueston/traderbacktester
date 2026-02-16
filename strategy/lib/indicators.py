@@ -139,10 +139,12 @@ class OBIIndicatorVectorized(BaseIndicator):
 class CancelationIndicator(BaseIndicator):
     """sum"""
     
-    def __init__(self, name, action_column='action', cancel_value='C', **kwargs):
+    def __init__(self, name, action_column='action', cancel_value='C', side_column=None, side_value='B', **kwargs):
         super().__init__(name, **kwargs)
         self.action_column = action_column
         self.cancel_value = cancel_value
+        self.side_column = side_column
+        self.side_value = side_value
         self.count = 0
     
     def initialize(self):
@@ -151,6 +153,9 @@ class CancelationIndicator(BaseIndicator):
     def process_row(self, row, trailing_df):
         if self.action_column in trailing_df.columns:
             if self.cancel_value in str(row[self.action_column]):
+                if self.side_column and self.side_column in trailing_df.columns:
+                    if str(row[self.side_column]) != self.side_value:
+                        return
                 self.count += 1
     
     def finalize(self):

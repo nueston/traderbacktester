@@ -26,7 +26,7 @@ class PriceStrategy(Strategy):
             'volume': [],
             'cancelations': [],
         }
-        self.max_history_length = 10
+        self.max_history_length = 5
         self.last_monitor_time = None
 
         self.data_bento = DataBento()
@@ -34,7 +34,7 @@ class PriceStrategy(Strategy):
         # DataFrame to collect data for plotting
         self.plot_data = pd.DataFrame(columns=['time', 'price', 'obi', 'cancelations', 'volume'])
 
-    def monitor_indicators(self, monitor_frequency=30.0, trailing_duration=30.0):
+    def monitor_indicators(self, monitor_frequency=10.0, trailing_duration=10.0):
         """
         Monitor and update indicators history.
 
@@ -67,7 +67,7 @@ class PriceStrategy(Strategy):
                 {'name': 'price', 'type': 'price'},
                 {'name': 'obi', 'type': 'obi', 'depth': 10},
                 {'name': 'volume', 'type': 'volume'},
-                {'name': 'cancelations', 'type': 'cancelations', 'action_column': 'action', 'cancel_value': 'C'},
+                {'name': 'cancelations', 'type': 'cancelations', 'action_column': 'action', 'side_column': 'side','cancel_value': 'C'},
                 {'name': 'spread', 'type': 'spread', 'bid_column': 'bid_px_00', 'ask_column': 'ask_px_00'},
             ]
             results = run_trailing_indicators(trailing_df, indicator_rules)
@@ -91,12 +91,13 @@ class PriceStrategy(Strategy):
         if current_indicators:
 
             price_change = linear_regression(self.indicators_history['price'])
+            obi_change = linear_regression(self.indicators_history['obi'])
             # Append current values to plot DataFrame
             new_row = pd.DataFrame([{
                 'time': self.data.index[-1],
                 'price': current_indicators['price'],
                 'price_trend': price_change,
-                'obi': current_indicators['obi'],
+                'obi_change': obi_change,
                 'cancelations': current_indicators['cancelations'],
                 'volume': current_indicators['volume'],
             }])
@@ -117,7 +118,7 @@ class PriceStrategy(Strategy):
         p = Plot(self.plot_data)
         p.show(
             x='time',
-            y_lines=['price', 'price_trend', 'obi', 'cancelations'],
+            y_lines=['price', 'price_trend', 'obi_change', 'cancelations'],
             bar_column='volume',
             title='Price & OBI with Volume',
         )
