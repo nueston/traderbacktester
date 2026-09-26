@@ -1,13 +1,20 @@
 """
-Analysis utilities for indicator monitoring
+Analysis module for indicator monitoring and trend detection
 """
+import os
+import sys
+import pandas as pd
 import numpy as np
+
+# Add the parent directory to path to import our modules
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from strategy.lib.math import linear_regression
 
 
 def print_indicators_history(timestamp, indicators_history):
     """
-    Print the complete history of all indicators including OBI, spread, volume, cancelations, and price
+    Print the complete history of all indicators
     
     Args:
         timestamp (datetime): Current timestamp for the detection
