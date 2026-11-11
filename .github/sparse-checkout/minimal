@@ -1,6 +1,10 @@
 # Minimal - excludes all plotting and demo files
 # Use for: CI/CD tests, focused workflows
 /*
-!main.py
-!plot_ohlc.py
-!plot.py
+.gitignore
+requirements.txt
+test/
+engine/
+data/
+strategy/
+.github/
