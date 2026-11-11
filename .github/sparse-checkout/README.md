@@ -13,4 +13,12 @@
 # - uses: actions/checkout@v3
 #   with:
 #     sparse-checkout-cone-mode: false
-#     sparse-checkout: .github/sparse-checkout/minimal
+#     sparse-checkout: |
+#       /requirements.txt
+#       /test/
+#       /engine/
+#       /data/
+#       /strategy/
+#       /rsc/
+#
+# The sparse-checkout input expects patterns, not a path to one of these profile files.

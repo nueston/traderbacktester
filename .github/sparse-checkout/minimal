@@ -1,10 +1,8 @@
-# Minimal - excludes all plotting and demo files
+# Minimal - includes files needed by the focused CI tests and their data
 # Use for: CI/CD tests, focused workflows
-/*
-.gitignore
-requirements.txt
-test/
-engine/
-data/
-strategy/
-.github/
+/requirements.txt
+/test/
+/engine/
+/data/
+/strategy/
+/rsc/
