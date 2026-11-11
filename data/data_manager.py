@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 
 
@@ -91,4 +92,7 @@ class CsvMgr:
     
 # From start date to end (auto-generated filename)
 csv_manager = CsvMgr()
-output_file = csv_manager.cut_csv("c:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\WDC_tickbidask.csv", '09/03/2025')
+# Construct path relative to project root (two levels up from data/)
+project_root = os.path.dirname(os.path.dirname(__file__))
+csv_path = os.path.join(project_root, "rsc", "WDC_tickbidask.csv")
+output_file = csv_manager.cut_csv(csv_path, '09/03/2025')

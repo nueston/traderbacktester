@@ -3,6 +3,7 @@ import matplotlib.dates as mdates
 import pandas as pd
 from datetime import datetime
 from data.data_bento import DataBento
+import os
 
 
 class PlotOhlc:
@@ -178,10 +179,12 @@ class PlotOhlc:
 # Example usage
 if __name__ == "__main__":
     # Load from CSV using class method
-    csv_path = "rsc\\xnas-itch-20260120.mbp-10_ONDS.csv"
+    # Construct path relative to project root (same directory as this script)
+    project_root = os.path.dirname(__file__)
+    csv_file = os.path.join(project_root, "rsc", "xnas-itch-20250612.mbp-10_ONDS.csv")
     
     try:
-        plotter_from_csv = PlotOhlc.from_csv(csv_path)
+        plotter_from_csv = PlotOhlc.from_csv(csv_file)
         plotter_from_csv.show_plot(title="ONDS Price and Size Data")
         
         # Print summary statistics

@@ -14,7 +14,9 @@ import pandas as pd
 if __name__ == "__main__":
     
     # For Bento MBP-10 data
-    bento_file = "rsc\\xnas-itch-20260115.mbp-10_ONDS.csv"
+    # Construct path relative to project root (same directory as this script)
+    project_root = os.path.dirname(__file__)
+    csv_file = os.path.join(project_root, "rsc", "xnas-itch-20250612.mbp-10_ONDS.csv")
     bento_loader = DataBento()
     data = bento_loader.load_bento_mbp10_data(bento_file, timeframe='1T')
     bt = Backtest(data, BentoStrategy, cash=10000, commission=.002, exclusive_orders=True, finalize_trades=True)

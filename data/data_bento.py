@@ -572,7 +572,9 @@ class DataBento:
 if __name__ == "__main__":
     # Create DataBento instance
     data_bento = DataBento()
-    csv_folder_path = "C:\\Users\\fy37bby\\user\\dev\\misc\\backtest\\rsc\\XNAS-20260127-WTVN5DQMQ6\\xnas-itch-20260126.mbp-10.csv_"
+    # Construct path relative to project root (two levels up from data/)
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    csv_folder_path = os.path.join(project_root, "rsc", "XNAS-20260127-WTVN5DQMQ6", "xnas-itch-20260126.mbp-10.csv_")
 
     # Parse over csv_folder_path and check for 5% divergence with symbol ONDS
     import glob
