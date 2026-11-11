@@ -1,0 +1,7 @@
+# Core - excludes plotting files and tests
+# Use for: building/packaging core functionality only
+/*
+!main.py
+!plot_ohlc.py
+!plot.py
+!test/
