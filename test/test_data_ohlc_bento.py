@@ -9,7 +9,9 @@ from data.data_bento import DataBento
 
 def test_trailing_obi():
     """Test trailing_obi method with ONDS data"""
-    csv_path = "rsc\\xnas-itch-20260115.mbp-10_ONDS.csv"
+    # Construct path relative to project root (parent of test directory)
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    csv_file = os.path.join(project_root, "rsc", "xnas-itch-20250612.mbp-10_ONDS.csv")
     
     print("Testing trailing_obi method...")
     print(f"Loading CSV: {csv_path}")

@@ -15,7 +15,10 @@ def test_obi_strategy():
     print("Obi Strategy Backtesting Test")
     print("=" * 50)
     
-    csv_file = "rsc\\xnas-itch-20250612.mbp-10_ONDS.csv"
+    # Construct path relative to project root (parent of test directory)
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    csv_file = os.path.join(project_root, "rsc", "xnas-itch-20250612.mbp-10_ONDS.csv")
+    
     bento_loader = DataBento()
     market_data = bento_loader.load_csv(csv_file)
     market_data = bento_loader.filter_data(market_data, symbol=None, exclude_cancel=False, depth_level=None, exclude_morning_minutes=10, min_size=20)

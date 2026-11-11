@@ -215,7 +215,9 @@ def test_momentum_strategy():
     
     # Create realistic market data with tighter spreads
     #market_data = create_realistic_market_data(3000, base_price=4.0)
-    csv_file = "rsc\\xnas-itch-20260115.mbp-10_ONDS.csv"
+    # Construct path relative to project root (parent of test directory)
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    csv_file = os.path.join(project_root, "rsc", "xnas-itch-20250612.mbp-10_ONDS.csv")
     bento_loader = DataBento()
     market_data = bento_loader.load_csv(csv_file)
     print(f"Created {len(market_data)} ticks with {len(market_data.columns)} columns")
